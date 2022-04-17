@@ -27,6 +27,21 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <profile>
+            <id>skip-tests-by-default</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <maven.test.skip>true</maven.test.skip>
+            </properties>
+        </profile>
+        <profile>
+            <id>change-settings</id>
+        </profile>
+    </profiles>
+
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>

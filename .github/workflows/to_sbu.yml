@@ -22,4 +22,4 @@ jobs:
         distribution: 'temurin'
         cache: maven
     - name: Build with Maven
-      run: mvn clean install -Dtest="MonitorTest#testOutputChangeToSBU"
+      run: mvn clean install -P change-settings -Dtest="MonitorTest#testOutputChangeToSBU"
