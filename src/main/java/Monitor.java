@@ -35,10 +35,6 @@ public class Monitor extends TimerTask {
     }
 
     public void monitor() throws IOException {
-        if (jSessionId == null || lastFetchedTimeMobile == null ||
-                Math.abs(new Date().getTime() - lastFetchedTimeMobile.getTime()) > 21600000) {
-            loginToWebService();
-        }
         getStatus();
     }
 
