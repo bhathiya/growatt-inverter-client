@@ -1,17 +1,10 @@
-
 import com.google.gson.Gson;
-import model.Card;
-import model.ChargingMode;
-import model.CurrentStatus;
-import model.Header;
-import model.KeyValue;
-import model.OutputMode;
-import model.Section;
-import model.SettingsResponse;
-import model.WebhookBody;
-import model.Widget;
+import com.google.gson.GsonBuilder;
+import model.*;
 import okhttp3.Headers;
+import okhttp3.OkHttpClient;
 import okhttp3.ResponseBody;
+import okhttp3.logging.HttpLoggingInterceptor;
 import retrofit2.Call;
 import retrofit2.Response;
 import retrofit2.Retrofit;
@@ -24,20 +17,15 @@ import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
 import java.time.LocalTime;
 import java.time.ZoneId;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TimeZone;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 
 public class Monitor extends TimerTask {
 
     private String jSessionId = null;
     private String serverId = null;
-    private Date lastFetchedTime = new Date();
+    private String webCookie = null;
+    private Date lastFetchedTimeMobile = new Date();
+    private Date lastFetchedTimeWeb = new Date();
     private boolean power = true;
 
     public static void main(String[] args) {
@@ -46,55 +34,76 @@ public class Monitor extends TimerTask {
         timer.scheduleAtFixedRate(monitor, 0, 300000);
     }
 
-    public void monitor() throws IOException, NoSuchAlgorithmException {
-        if (jSessionId == null || lastFetchedTime == null ||
-                Math.abs(new Date().getTime() - lastFetchedTime.getTime()) > 21600000) {
-            loginToMobileService();
+    public void monitor() throws IOException {
+        if (jSessionId == null || lastFetchedTimeMobile == null ||
+                Math.abs(new Date().getTime() - lastFetchedTimeMobile.getTime()) > 21600000) {
+            loginToWebService();
         }
         getStatus();
     }
 
-    public void loginToMobileService() throws IOException, NoSuchAlgorithmException {
+    public String loginToMobileService() throws IOException, NoSuchAlgorithmException {
 
-        Retrofit retrofit = new Retrofit.Builder()
-                .baseUrl("https://server.growatt.com/")
-                .build();
+        if (jSessionId == null || lastFetchedTimeMobile == null ||
+                Math.abs(new Date().getTime() - lastFetchedTimeMobile.getTime()) > 21600000) {
 
-        GrowattMobileService service = retrofit.create(GrowattMobileService.class);
+            Retrofit retrofit = new Retrofit.Builder()
+                    .baseUrl("https://server.growatt.com/")
+                    .build();
 
-        byte[] passwordInBytes = Configurations.password.getBytes(StandardCharsets.UTF_8);
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        byte[] passwordMd5 = md.digest(passwordInBytes);
-        Call<ResponseBody> call = service.mobileLogin(Configurations.username, passwordMd5);
-        Response<ResponseBody> response = call.execute();
-        Headers headers = response.headers();
-        List<String> cookies = headers.values("Set-Cookie");
-        String J_SESSION_ID = "JSESSIONID=";
-        jSessionId = cookies.stream()
-                .filter(cookie -> cookie.startsWith(J_SESSION_ID))
-                .findAny()
-                .orElse("");
-        String SERVER_ID = "SERVERID=";
-        serverId = cookies.stream()
-                .filter(cookie -> cookie.startsWith(SERVER_ID))
-                .findAny()
-                .orElse("");
+            GrowattMobileService service = retrofit.create(GrowattMobileService.class);
 
-        System.out.println(jSessionId + serverId);
-        lastFetchedTime = new Date();
+            byte[] passwordInBytes = Configurations.password.getBytes(StandardCharsets.UTF_8);
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] passwordMd5 = md.digest(passwordInBytes);
+            Call<ResponseBody> call = service.mobileLogin(Configurations.username, passwordMd5);
+            Response<ResponseBody> response = call.execute();
+            Headers headers = response.headers();
+            List<String> cookies = headers.values("Set-Cookie");
+            String J_SESSION_ID = "JSESSIONID=";
+            jSessionId = cookies.stream()
+                    .filter(cookie -> cookie.startsWith(J_SESSION_ID))
+                    .findAny()
+                    .orElse("");
+            String SERVER_ID = "SERVERID=";
+            serverId = cookies.stream()
+                    .filter(cookie -> cookie.startsWith(SERVER_ID))
+                    .findAny()
+                    .orElse("");
+
+            System.out.println(jSessionId + serverId);
+            lastFetchedTimeMobile = new Date();
+            System.out.println("New: " + jSessionId + serverId);
+        }
+
+        System.out.println("Reused: " + jSessionId + serverId);
+        return jSessionId + serverId;
     }
 
     private void getStatus() throws IOException {
+        Gson gson = new GsonBuilder()
+                .setLenient()
+                .create();
+
+        HttpLoggingInterceptor logging = new HttpLoggingInterceptor();
+        logging.setLevel(HttpLoggingInterceptor.Level.BODY);
+        OkHttpClient.Builder httpClient = new OkHttpClient.Builder();
+        httpClient.addInterceptor(logging);
+
         Retrofit retrofit = new Retrofit.Builder()
                 .baseUrl("https://server.growatt.com/")
-                .addConverterFactory(GsonConverterFactory.create())
+                .addConverterFactory(GsonConverterFactory.create(gson))
+                .client(httpClient.build())
                 .build();
 
-        GrowattMobileService service = retrofit.create(GrowattMobileService.class);
+        GrowattWebService service = retrofit.create(GrowattWebService.class);
 
-        String cookie = jSessionId + serverId;
+        String cookie = loginToWebService();
 
-        Call<CurrentStatus> status = service.getCurrentStatus(Configurations.plantId, Configurations.serialNo, cookie);
+        Map<String, String> fieldMap = new HashMap<>();
+        fieldMap.put("storageSn", Configurations.serialNo);
+
+        Call<CurrentStatus> status = service.getCurrentStatus(fieldMap, cookie, Configurations.plantId);
         Response<CurrentStatus> response = status.execute();
         assert response.body() != null;
         SimpleDateFormat sd = new SimpleDateFormat("yyyy.MM.dd G 'at' HH:mm:ss z");
@@ -122,9 +131,13 @@ public class Monitor extends TimerTask {
     }
 
     private void alertNoPower() throws IOException {
+        Gson gson = new GsonBuilder()
+                .setLenient()
+                .create();
+
         Retrofit retrofit = new Retrofit.Builder()
                 .baseUrl("https://chat.googleapis.com/")
-                .addConverterFactory(GsonConverterFactory.create())
+                .addConverterFactory(GsonConverterFactory.create(gson))
                 .build();
 
         GmailWebhookService service = retrofit.create(GmailWebhookService.class);
@@ -141,9 +154,13 @@ public class Monitor extends TimerTask {
     }
 
     private void alertPowerAvailable() throws IOException {
+        Gson gson = new GsonBuilder()
+                .setLenient()
+                .create();
+
         Retrofit retrofit = new Retrofit.Builder()
                 .baseUrl("https://chat.googleapis.com/")
-                .addConverterFactory(GsonConverterFactory.create())
+                .addConverterFactory(GsonConverterFactory.create(gson))
                 .build();
 
         GmailWebhookService service = retrofit.create(GmailWebhookService.class);
@@ -161,9 +178,13 @@ public class Monitor extends TimerTask {
     }
 
     private void alertError(String title, String message) throws IOException {
+        Gson gson = new GsonBuilder()
+                .setLenient()
+                .create();
+
         Retrofit retrofit = new Retrofit.Builder()
                 .baseUrl("https://chat.googleapis.com/")
-                .addConverterFactory(GsonConverterFactory.create())
+                .addConverterFactory(GsonConverterFactory.create(gson))
                 .build();
 
         GmailWebhookService service = retrofit.create(GmailWebhookService.class);
@@ -185,30 +206,37 @@ public class Monitor extends TimerTask {
 
     public String loginToWebService() throws IOException {
 
-        Retrofit retrofit = new Retrofit.Builder()
-                .baseUrl("https://server.growatt.com/")
-                .build();
+        if (webCookie == null || lastFetchedTimeWeb == null ||
+                Math.abs(new Date().getTime() - lastFetchedTimeWeb.getTime()) > 21600000) {
 
-        GrowattWebService service = retrofit.create(GrowattWebService.class);
+            Retrofit retrofit = new Retrofit.Builder()
+                    .baseUrl("https://server.growatt.com/")
+                    .build();
 
-        Call<ResponseBody> call = service.webLogin(Configurations.username, Configurations.password, "");
-        Response<ResponseBody> response = call.execute();
-        Headers headers = response.headers();
-        List<String> cookies = headers.values("Set-Cookie");
-        String J_SESSION_ID = "JSESSIONID=";
-        String jSessionId = cookies.stream()
-                .filter(cookie -> cookie.startsWith(J_SESSION_ID))
-                .findAny()
-                .orElse("");
-        String SERVER_ID = "SERVERID=";
-        String serverId = cookies.stream()
-                .filter(cookie -> cookie.startsWith(SERVER_ID))
-                .findAny()
-                .orElse("");
+            GrowattWebService service = retrofit.create(GrowattWebService.class);
 
-        System.out.println(jSessionId + serverId);
+            Call<ResponseBody> call = service.webLogin(Configurations.username, Configurations.password, "");
+            Response<ResponseBody> response = call.execute();
+            Headers headers = response.headers();
+            List<String> cookies = headers.values("Set-Cookie");
+            String J_SESSION_ID = "JSESSIONID=";
+            String jSessionId = cookies.stream()
+                    .filter(cookie -> cookie.startsWith(J_SESSION_ID))
+                    .findAny()
+                    .orElse("");
+            String SERVER_ID = "SERVERID=";
+            String serverId = cookies.stream()
+                    .filter(cookie -> cookie.startsWith(SERVER_ID))
+                    .findAny()
+                    .orElse("");
 
-        return jSessionId + serverId;
+            webCookie = jSessionId + serverId;
+            lastFetchedTimeWeb = new Date();
+            System.out.println("New: " + webCookie);
+        }
+
+        System.out.println("Reused: " + webCookie);
+        return webCookie;
     }
 
     public void updateOutputMode(OutputMode outputMode) throws IOException {
