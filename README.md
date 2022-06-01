@@ -4,7 +4,9 @@ Java Client for the Growatt Inverter
 This Java application currently supports 3 main actions.
 
 A1) Notify when the grid voltage is 0v (i.e. Power cut)
+
 A2) Change power input priority (SUB / SBU)
+
 A3) Change battery charging priority (Solar Only / Solar Priority)
 
 ## A1) Notify when the grid voltage is 0v (i.e. Power cut). 
